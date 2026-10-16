@@ -1,0 +1,140 @@
+{
+  "version": 1,
+  "endpoints": [
+    {
+      "id": "c0e38272-008c-4ad9-aaa1-115c0ebf9beb",
+      "name": "List users",
+      "description": "",
+      "method": "GET",
+      "path": "/api/users",
+      "enabled": true,
+      "tags": [],
+      "response": {
+        "status": 200,
+        "headers": {},
+        "body": "{{fixtures.users}}"
+      },
+      "latency": {
+        "min": 100,
+        "max": 300
+      },
+      "failure": {
+        "rate": 0,
+        "type": "status",
+        "status": 500,
+        "body": "{\n  \"error\": \"Simulated failure\"\n}"
+      },
+      "createdAt": "2026-10-16T12:39:30.809Z",
+      "updatedAt": "2026-10-16T12:39:30.809Z"
+    },
+    {
+      "id": "5005e62f-da66-400f-8138-1fa9c53af5e1",
+      "name": "Get user by id",
+      "description": "",
+      "method": "GET",
+      "path": "/api/users/:id",
+      "enabled": true,
+      "tags": [],
+      "response": {
+        "status": 200,
+        "headers": {},
+        "body": "{{find fixtures.users id=params.id ?? null}}"
+      },
+      "latency": {
+        "min": 0,
+        "max": 0
+      },
+      "failure": {
+        "rate": 0,
+        "type": "status",
+        "status": 500,
+        "body": "{\n  \"error\": \"Simulated failure\"\n}"
+      },
+      "createdAt": "2026-10-16T12:39:30.809Z",
+      "updatedAt": "2026-10-16T12:39:30.809Z"
+    },
+    {
+      "id": "4e88afb9-1763-4735-8f6e-8523f445ae7c",
+      "name": "Create user",
+      "description": "",
+      "method": "POST",
+      "path": "/api/users",
+      "enabled": true,
+      "tags": [],
+      "response": {
+        "status": 201,
+        "headers": {
+          "X-Request-Id": "{{uuid}}"
+        },
+        "body": "{\n  \"id\": \"{{uuid}}\",\n  \"name\": \"{{body.name ?? 'New user'}}\",\n  \"createdAt\": \"{{now}}\"\n}"
+      },
+      "latency": {
+        "min": 0,
+        "max": 0
+      },
+      "failure": {
+        "rate": 0,
+        "type": "status",
+        "status": 500,
+        "body": "{\n  \"error\": \"Simulated failure\"\n}"
+      },
+      "createdAt": "2026-10-16T12:39:30.809Z",
+      "updatedAt": "2026-10-16T12:39:30.809Z"
+    },
+    {
+      "id": "e3ab4158-8bc3-48da-9a40-b71305f9e49c",
+      "name": "Flaky service",
+      "description": "Slow and fails ~30% of the time — useful for testing loading and retry states.",
+      "method": "GET",
+      "path": "/api/flaky",
+      "enabled": true,
+      "tags": [],
+      "response": {
+        "status": 200,
+        "headers": {},
+        "body": "{\n  \"ok\": true\n}"
+      },
+      "latency": {
+        "min": 300,
+        "max": 1500
+      },
+      "failure": {
+        "rate": 0.3,
+        "type": "status",
+        "status": 503,
+        "body": "{\n  \"error\": \"Service unavailable\"\n}"
+      },
+      "createdAt": "2026-10-16T12:39:30.809Z",
+      "updatedAt": "2026-10-16T12:39:30.809Z"
+    }
+  ],
+  "fixtures": [
+    {
+      "id": "d9b4ec89-f110-46c8-8f3f-0a7fd9c37bf0",
+      "name": "users",
+      "description": "Sample users shared by the /api/users endpoints",
+      "data": [
+        {
+          "id": 1,
+          "name": "Ada Lovelace",
+          "email": "ada@example.com",
+          "role": "admin"
+        },
+        {
+          "id": 2,
+          "name": "Alan Turing",
+          "email": "alan@example.com",
+          "role": "member"
+        },
+        {
+          "id": 3,
+          "name": "Grace Hopper",
+          "email": "grace@example.com",
+          "role": "member"
+        }
+      ],
+      "createdAt": "2026-10-16T12:39:30.808Z",
+      "updatedAt": "2026-10-16T12:39:30.808Z"
+    }
+  ]
+}
