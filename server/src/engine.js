@@ -42,7 +42,14 @@ export function mockHandler({ store, logs }) {
       query: preview(Object.keys(req.query || {}).length ? req.query : undefined),
       requestBody: preview(req.body),
     };
-    const finish = (fields) => logs.add({ ...entry, duration: Date.now() - started, ...fields });
+    // Awaited before responding: serverless runtimes may freeze the instance right after the response.
+    const finish = async (fields) => {
+      try {
+        await logs.add({ ...entry, duration: Date.now() - started, ...fields });
+      } catch (err) {
+        console.error('MockForge: failed to write request log', err);
+      }
+    };
 
     if (req.path.toLowerCase().startsWith(ADMIN_PREFIX)) {
       res.status(404).json({ error: 'Unknown MockForge admin route' });
@@ -51,13 +58,13 @@ export function mockHandler({ store, logs }) {
 
     const match = findEndpoint(store.list('endpoints'), req.method, req.path);
     if (!match) {
+      await finish({ status: 404, matched: false });
       res.status(404).json({
         error: 'No mock endpoint matches this request',
         method: req.method,
         path: req.path,
         hint: `Create one in the MockForge UI at ${ADMIN_PREFIX}/`,
       });
-      finish({ status: 404, matched: false });
       return;
     }
 
@@ -84,7 +91,7 @@ export function mockHandler({ store, logs }) {
     const logged = { matched: true, endpointId: endpoint.id, endpointName: endpoint.name, delay, simulatedFailure: failed };
 
     if (failed && endpoint.failure.type === 'network') {
-      finish({ ...logged, status: 0, note: 'Connection dropped (simulated network error)' });
+      await finish({ ...logged, status: 0, note: 'Connection dropped (simulated network error)' });
       req.socket.destroy();
       return;
     }
@@ -99,11 +106,12 @@ export function mockHandler({ store, logs }) {
       body = render(spec.body, ctx);
       for (const [name, value] of Object.entries(spec.headers || {})) headers[name] = render(value, ctx);
     } catch (err) {
+      await finish({ ...logged, status: 500, note: `Template error: ${err.message}` });
       res.status(500).json({ error: 'MockForge template error', message: err.message, endpoint: endpoint.name });
-      finish({ ...logged, status: 500, note: `Template error: ${err.message}` });
       return;
     }
 
+    await finish({ ...logged, status: spec.status, responseBody: preview(body) });
     res.status(spec.status);
     res.set('X-MockForge-Endpoint', endpoint.id);
     if (failed) res.set('X-MockForge-Simulated', 'failure');
@@ -115,7 +123,5 @@ export function mockHandler({ store, logs }) {
     }
     if (noBody) res.end();
     else res.send(body);
-
-    finish({ ...logged, status: spec.status, responseBody: preview(body) });
   };
 }

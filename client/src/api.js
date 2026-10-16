@@ -4,10 +4,36 @@ const BASE = '/__mockforge/api';
 export const MOCK_ORIGIN =
   import.meta.env.VITE_MOCK_ORIGIN || (import.meta.env.DEV ? 'http://localhost:4000' : window.location.origin);
 
+const TOKEN_KEY = 'mockforge.adminToken';
+
+export function getToken() {
+  try {
+    return localStorage.getItem(TOKEN_KEY) || '';
+  } catch {
+    return '';
+  }
+}
+
+export function setToken(token) {
+  try {
+    if (token) localStorage.setItem(TOKEN_KEY, token);
+    else localStorage.removeItem(TOKEN_KEY);
+  } catch {
+    /* storage unavailable: the token lasts for this page load only */
+  }
+  memoryToken = token;
+}
+
+let memoryToken = getToken();
+
+export class AuthError extends Error {}
+
 async function request(method, url, body) {
+  const headers = body === undefined ? {} : { 'Content-Type': 'application/json' };
+  if (memoryToken) headers['X-MockForge-Token'] = memoryToken;
   const res = await fetch(BASE + url, {
     method,
-    headers: body === undefined ? {} : { 'Content-Type': 'application/json' },
+    headers,
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const text = await res.text();
@@ -17,6 +43,7 @@ async function request(method, url, body) {
   } catch {
     data = text;
   }
+  if (res.status === 401) throw new AuthError(data?.error || 'Admin token required');
   if (!res.ok) throw new Error(data?.error || `${res.status} ${res.statusText}`);
   return data;
 }

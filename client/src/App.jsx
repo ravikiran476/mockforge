@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api, MOCK_ORIGIN } from './api.js';
+import { api, AuthError, getToken, MOCK_ORIGIN, setToken } from './api.js';
 import EndpointsPage from './components/EndpointsPage.jsx';
 import FixturesPage from './components/FixturesPage.jsx';
 import OpenApiPage from './components/OpenApiPage.jsx';
@@ -14,6 +14,22 @@ const TABS = [
   { id: 'data', label: 'Share & sync' },
 ];
 
+function TokenGate({ onSubmit, rejected }) {
+  const [value, setValue] = useState('');
+  return (
+    <form className="card gate" onSubmit={(e) => { e.preventDefault(); onSubmit(value.trim()); }}>
+      <h2>Admin token required</h2>
+      <p className="muted">
+        This MockForge server protects its admin UI. Enter the value of <code>MOCKFORGE_ADMIN_TOKEN</code>. Mock
+        endpoints themselves stay public.
+      </p>
+      {rejected && <p className="error-text">That token was rejected.</p>}
+      <input type="password" autoFocus value={value} onChange={(e) => setValue(e.target.value)} placeholder="Admin token" />
+      <button className="btn primary" disabled={!value.trim()}>Unlock</button>
+    </form>
+  );
+}
+
 const initialTab = () => {
   const hash = window.location.hash.slice(1);
   return TABS.some((t) => t.id === hash) ? hash : 'endpoints';
@@ -24,7 +40,9 @@ export default function App() {
   const [endpoints, setEndpoints] = useState([]);
   const [fixtures, setFixtures] = useState([]);
   const [toast, setToast] = useState(null);
-  const [offline, setOffline] = useState(false);
+  const [offline, setOffline] = useState(null);
+  const [auth, setAuth] = useState(null); // null | 'required' | 'rejected'
+  const [hasToken, setHasToken] = useState(() => Boolean(getToken()));
 
   const notify = useCallback((message, kind = 'ok') => {
     setToast({ message, kind, at: Date.now() });
@@ -41,9 +59,15 @@ export default function App() {
       const [e, f] = await Promise.all([api.listEndpoints(), api.listFixtures()]);
       setEndpoints(e);
       setFixtures(f);
-      setOffline(false);
-    } catch {
-      setOffline(true);
+      setOffline(null);
+      setAuth(null);
+    } catch (err) {
+      if (err instanceof AuthError) {
+        setAuth(getToken() ? 'rejected' : 'required');
+        setOffline(null);
+      } else {
+        setOffline(err instanceof TypeError ? "Can't reach the MockForge server." : err.message);
+      }
     }
   }, []);
 
@@ -54,6 +78,20 @@ export default function App() {
   const go = (id) => {
     setTab(id);
     window.history.replaceState(null, '', `#${id}`);
+  };
+
+  const unlock = (token) => {
+    setToken(token);
+    setHasToken(true);
+    refresh();
+  };
+
+  const signOut = () => {
+    setToken('');
+    setHasToken(false);
+    setEndpoints([]);
+    setFixtures([]);
+    refresh();
   };
 
   const shared = { endpoints, fixtures, refresh, notify };
@@ -76,22 +114,24 @@ export default function App() {
         </nav>
         <div className="origin" title="Point your frontend at this base URL">
           Mocks at <code>{MOCK_ORIGIN}</code>
+          {hasToken && <button className="btn ghost small signout" onClick={signOut}>Sign out</button>}
         </div>
       </header>
 
       {offline && (
         <div className="banner error">
-          Can't reach the MockForge server. Start it with <code>npm run dev</code> and{' '}
+          {offline} Start it locally with <code>npm run dev</code>, or{' '}
           <button className="link" onClick={refresh}>retry</button>.
         </div>
       )}
 
       <main className="content">
-        {tab === 'endpoints' && <EndpointsPage {...shared} />}
-        {tab === 'fixtures' && <FixturesPage {...shared} />}
-        {tab === 'openapi' && <OpenApiPage {...shared} onDone={() => go('endpoints')} />}
-        {tab === 'logs' && <LogsPage notify={notify} />}
-        {tab === 'data' && <DataPage {...shared} />}
+        {auth && <TokenGate onSubmit={unlock} rejected={auth === 'rejected'} />}
+        {!auth && tab === 'endpoints' && <EndpointsPage {...shared} />}
+        {!auth && tab === 'fixtures' && <FixturesPage {...shared} />}
+        {!auth && tab === 'openapi' && <OpenApiPage {...shared} onDone={() => go('endpoints')} />}
+        {!auth && tab === 'logs' && <LogsPage notify={notify} />}
+        {!auth && tab === 'data' && <DataPage {...shared} />}
       </main>
 
       {toast && <div key={toast.at} className={`toast ${toast.kind}`}>{toast.message}</div>}

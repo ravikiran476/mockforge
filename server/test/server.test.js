@@ -1,14 +1,14 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createApp } from '../src/app.js';
-import { createStore } from '../src/store.js';
+import { createStore, memoryBackend } from '../src/store.js';
 import { seedData } from '../src/seed.js';
 
 let server;
 let base;
 
 before(async () => {
-  const app = createApp({ store: createStore(null, { seed: seedData() }) });
+  const app = createApp({ store: await createStore(memoryBackend(), { seed: seedData() }) });
   await new Promise((resolve) => {
     server = app.listen(0, resolve);
   });
@@ -141,4 +141,44 @@ test('request log records mock traffic', async () => {
   const logs = await (await admin('/logs')).json();
   assert.equal(logs[0].endpointName, 'Get user by id');
   assert.equal(logs[0].status, 200);
+});
+
+async function listen(app) {
+  const srv = await new Promise((resolve) => {
+    const s = app.listen(0, () => resolve(s));
+  });
+  return { srv, url: `http://127.0.0.1:${srv.address().port}` };
+}
+
+test('admin token protects the admin API but not mocks', async () => {
+  const app = createApp({ store: await createStore(memoryBackend(), { seed: seedData() }), adminToken: 's3cret' });
+  const { srv, url } = await listen(app);
+  try {
+    assert.equal((await fetch(`${url}/__mockforge/api/endpoints`)).status, 401);
+    assert.equal((await fetch(`${url}/__mockforge/api/endpoints`, { headers: { 'X-MockForge-Token': 'nope' } })).status, 401);
+    const ok = await fetch(`${url}/__mockforge/api/endpoints`, { headers: { Authorization: 'Bearer s3cret' } });
+    assert.equal(ok.status, 200);
+    assert.equal((await fetch(`${url}/api/users/1`)).status, 200);
+  } finally {
+    srv.close();
+  }
+});
+
+test('public deploys keep the admin API closed until a token is set', async () => {
+  const app = createApp({ store: await createStore(memoryBackend(), { seed: seedData() }), requireToken: true });
+  const { srv, url } = await listen(app);
+  try {
+    assert.equal((await fetch(`${url}/__mockforge/api/health`)).status, 503);
+  } finally {
+    srv.close();
+  }
+});
+
+test('shared stores pick up writes from other instances', async () => {
+  const backend = memoryBackend();
+  const a = await createStore(backend, { seed: seedData(), shared: true });
+  const b = await createStore(backend, { shared: true });
+  await a.remove('endpoints', a.list('endpoints')[0].id);
+  await b.refresh();
+  assert.equal(b.list('endpoints').length, a.list('endpoints').length);
 });

@@ -37,12 +37,13 @@ export default function DataPage({ refresh, notify }) {
       <div className="card">
         <h2>Share across development and testing</h2>
         <p>
-          Everything you configure is saved to a single JSON file. Commit it so the whole team and your CI use the same
-          mocks and fixtures.
+          Locally, everything you configure is saved to a single JSON file. Commit it so the whole team and your CI use
+          the same mocks and fixtures. A Vercel deploy starts from that file and then keeps changes in Redis — export
+          from here to bring them back into the repo.
         </p>
         {health && (
           <dl className="facts">
-            <dt>Data file</dt><dd><code>{health.dataFile}</code></dd>
+            <dt>Storage</dt><dd><code>{health.storage}</code></dd>
             <dt>Endpoints</dt><dd>{health.endpoints}</dd>
             <dt>Fixtures</dt><dd>{health.fixtures}</dd>
           </dl>
@@ -81,7 +82,9 @@ export default function DataPage({ refresh, notify }) {
         <p className="muted small">The admin API lives at <code>/__mockforge/api</code>, so test setup can create endpoints and fixtures programmatically:</p>
         <pre className="code">{`await fetch('${MOCK_ORIGIN}/__mockforge/api/fixtures', {
   method: 'POST',
-  headers: { 'Content-Type': 'application/json' },
+  headers: {
+    'Content-Type': 'application/json',${health?.adminProtected ? "\n    'X-MockForge-Token': process.env.MOCKFORGE_ADMIN_TOKEN," : ''}
+  },
   body: JSON.stringify({ name: 'cart', data: { items: [] } }),
 });`}</pre>
       </div>

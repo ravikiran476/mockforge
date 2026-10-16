@@ -256,3 +256,7 @@ pre.code { max-height: 360px; overflow: auto; }
   .sidebar { position: static; max-height: 320px; }
   .grid-2, .grid-3 { grid-template-columns: 1fr; }
 }
+
+.gate { max-width: 420px; margin: 60px auto; display: flex; flex-direction: column; gap: 12px; }
+.gate p { margin: 0; }
+.signout { margin-left: 10px; }

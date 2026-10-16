@@ -19,61 +19,62 @@ export function adminRouter({ store, logs }) {
     }
   };
 
-  router.get('/health', (req, res) => {
+  router.get('/health', async (req, res) => {
     res.json({
       ok: true,
-      dataFile: store.file,
+      storage: store.location,
+      adminProtected: Boolean(process.env.MOCKFORGE_ADMIN_TOKEN),
       endpoints: store.list('endpoints').length,
       fixtures: store.list('fixtures').length,
     });
   });
 
   // ---- Endpoints -----------------------------------------------------------
-  router.get('/endpoints', (req, res) => res.json(store.list('endpoints')));
+  router.get('/endpoints', async (req, res) => res.json(store.list('endpoints')));
 
-  router.get('/endpoints/:id', (req, res) => res.json(mustGet('endpoints', req.params.id)));
+  router.get('/endpoints/:id', async (req, res) => res.json(mustGet('endpoints', req.params.id)));
 
-  router.post('/endpoints', (req, res) => {
+  router.post('/endpoints', async (req, res) => {
     const { id, ...input } = req.body ?? {};
-    res.status(201).json(store.insert('endpoints', normalizeEndpoint(input)));
+    res.status(201).json(await store.insert('endpoints', normalizeEndpoint(input)));
   });
 
-  router.put('/endpoints/:id', (req, res) => {
+  router.put('/endpoints/:id', async (req, res) => {
     const current = mustGet('endpoints', req.params.id);
     const next = normalizeEndpoint(req.body ?? {}, current);
-    res.json(store.replace('endpoints', current.id, next));
+    res.json(await store.replace('endpoints', current.id, next));
   });
 
-  router.post('/endpoints/:id/duplicate', (req, res) => {
+  router.post('/endpoints/:id/duplicate', async (req, res) => {
     const { id, createdAt, ...source } = mustGet('endpoints', req.params.id);
     const copy = normalizeEndpoint({ ...source, name: `${source.name} (copy)`, enabled: false });
-    res.status(201).json(store.insert('endpoints', copy));
+    res.status(201).json(await store.insert('endpoints', copy));
   });
 
-  router.delete('/endpoints/:id', (req, res) => {
-    if (!store.remove('endpoints', req.params.id)) throw new HttpError(404, 'Endpoint not found');
+  router.delete('/endpoints/:id', async (req, res) => {
+    if (!(await store.remove('endpoints', req.params.id))) throw new HttpError(404, 'Endpoint not found');
     res.status(204).end();
   });
 
   // ---- Fixtures ------------------------------------------------------------
-  router.get('/fixtures', (req, res) => res.json(store.list('fixtures')));
+  router.get('/fixtures', async (req, res) => res.json(store.list('fixtures')));
 
-  router.post('/fixtures', (req, res) => {
+  router.post('/fixtures', async (req, res) => {
     const { id, ...input } = req.body ?? {};
     const fixture = normalizeFixture(input);
     assertUniqueFixtureName(fixture.name);
-    res.status(201).json(store.insert('fixtures', fixture));
+    res.status(201).json(await store.insert('fixtures', fixture));
   });
 
-  router.put('/fixtures/:id', (req, res) => {
+  router.put('/fixtures/:id', async (req, res) => {
     const current = mustGet('fixtures', req.params.id);
     const next = normalizeFixture(req.body ?? {}, current);
     assertUniqueFixtureName(next.name, current.id);
-    res.json(store.replace('fixtures', current.id, next));
+    res.json(await store.replace('fixtures', current.id, next));
   });
 
-  router.delete('/fixtures/:id', (req, res) => {
-    if (!store.remove('fixtures', req.params.id)) throw new HttpError(404, 'Fixture not found');
+  router.delete('/fixtures/:id', async (req, res) => {
+    if (!(await store.remove('fixtures', req.params.id))) throw new HttpError(404, 'Fixture not found');
     res.status(204).end();
   });
 
@@ -83,7 +84,7 @@ export function adminRouter({ store, logs }) {
     return endpointsFromSpec(parseSpec(body.spec), { basePath });
   };
 
-  router.post('/openapi/preview', (req, res) => {
+  router.post('/openapi/preview', async (req, res) => {
     const result = generate(req.body);
     const existing = new Set(store.list('endpoints').map(routeKey));
     res.json({
@@ -92,7 +93,7 @@ export function adminRouter({ store, logs }) {
     });
   });
 
-  router.post('/openapi/import', (req, res) => {
+  router.post('/openapi/import', async (req, res) => {
     const { endpoints } = generate(req.body);
     const mode = req.body?.mode === 'replace' ? 'replace' : 'skip';
     const selected = Array.isArray(req.body?.select) ? new Set(req.body.select) : null;
@@ -104,10 +105,10 @@ export function adminRouter({ store, logs }) {
       if (existing && mode === 'skip') {
         summary.skipped++;
       } else if (existing) {
-        store.replace('endpoints', existing.id, normalizeEndpoint(draft, { id: existing.id, createdAt: existing.createdAt }));
+        await store.replace('endpoints', existing.id, normalizeEndpoint(draft, { id: existing.id, createdAt: existing.createdAt }));
         summary.replaced++;
       } else {
-        store.insert('endpoints', normalizeEndpoint(draft));
+        await store.insert('endpoints', normalizeEndpoint(draft));
         summary.created++;
       }
     }
@@ -115,20 +116,20 @@ export function adminRouter({ store, logs }) {
   });
 
   // ---- Request log ---------------------------------------------------------
-  router.get('/logs', (req, res) => res.json(logs.list()));
-  router.delete('/logs', (req, res) => {
-    logs.clear();
+  router.get('/logs', async (req, res) => res.json(await logs.list()));
+  router.delete('/logs', async (req, res) => {
+    await logs.clear();
     res.status(204).end();
   });
 
   // ---- Export / import (share fixtures across dev & test) -------------------
-  router.get('/export', (req, res) => {
+  router.get('/export', async (req, res) => {
     const { endpoints, fixtures } = store.snapshot();
     res.set('Content-Disposition', 'attachment; filename="mockforge.json"');
     res.json({ version: 1, exportedAt: new Date().toISOString(), endpoints, fixtures });
   });
 
-  router.post('/import', (req, res) => {
+  router.post('/import', async (req, res) => {
     const { data, mode = 'merge' } = req.body ?? {};
     if (!data || typeof data !== 'object') throw new HttpError(400, 'Expected { data: <exported MockForge JSON> }');
     const incomingEndpoints = (data.endpoints || []).map((e) => normalizeEndpoint(e, { id: e.id, createdAt: e.createdAt }));
@@ -141,13 +142,13 @@ export function adminRouter({ store, logs }) {
     }
 
     if (mode === 'replace') {
-      store.setAll({ endpoints: incomingEndpoints, fixtures: incomingFixtures });
+      await store.setAll({ endpoints: incomingEndpoints, fixtures: incomingFixtures });
     } else {
       const endpoints = new Map(store.list('endpoints').map((e) => [e.id, e]));
       for (const e of incomingEndpoints) endpoints.set(e.id, e);
       const fixtures = new Map(store.list('fixtures').map((f) => [f.name, f]));
       for (const f of incomingFixtures) fixtures.set(f.name, { ...f, id: fixtures.get(f.name)?.id ?? f.id });
-      store.setAll({ endpoints: [...endpoints.values()], fixtures: [...fixtures.values()] });
+      await store.setAll({ endpoints: [...endpoints.values()], fixtures: [...fixtures.values()] });
     }
     res.json({ mode, endpoints: incomingEndpoints.length, fixtures: incomingFixtures.length });
   });

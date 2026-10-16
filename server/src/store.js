@@ -3,60 +3,96 @@ import path from 'node:path';
 
 const empty = () => ({ version: 1, endpoints: [], fixtures: [] });
 
+/** JSON file on disk. Meant to be committed so a team shares the same mocks and fixtures. */
+export function fileBackend(file) {
+  return {
+    describe: file,
+    async read() {
+      if (!fs.existsSync(file)) return null;
+      try {
+        return JSON.parse(fs.readFileSync(file, 'utf8'));
+      } catch (err) {
+        throw new Error(`Could not parse MockForge data file ${file}: ${err.message}`);
+      }
+    },
+    async write(data) {
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      const tmp = `${file}.tmp`;
+      fs.writeFileSync(tmp, JSON.stringify(data, null, 2) + '\n');
+      fs.renameSync(tmp, file);
+    },
+  };
+}
+
+/** Process memory only (tests). */
+export function memoryBackend() {
+  let saved = null;
+  return {
+    describe: 'memory',
+    read: async () => (saved ? structuredClone(saved) : null),
+    write: async (data) => {
+      saved = structuredClone(data);
+    },
+  };
+}
+
+/** Upstash Redis (serverless deployments). The whole dataset lives in one JSON key. */
+export function redisBackend(redis, key = 'mockforge:data') {
+  return {
+    describe: `redis (${key})`,
+    read: async () => (await redis.get(key)) ?? null,
+    write: (data) => redis.set(key, data),
+  };
+}
+
 /**
- * JSON-file backed store. Pass `file = null` for a purely in-memory store (tests).
- * The file is meant to be committed so a team shares the same mocks and fixtures.
+ * Reads are synchronous against an in-memory copy. With `shared: true` (several
+ * serverless instances writing the same backend) call `refresh()` per request.
  */
-export function createStore(file, { seed } = {}) {
-  let data;
-
-  if (file && fs.existsSync(file)) {
-    try {
-      data = { ...empty(), ...JSON.parse(fs.readFileSync(file, 'utf8')) };
-    } catch (err) {
-      throw new Error(`Could not parse MockForge data file ${file}: ${err.message}`);
-    }
+export async function createStore(backend, { seed, shared = false } = {}) {
+  let data = await backend.read();
+  if (data) {
+    data = { ...empty(), ...data };
   } else {
-    data = seed ? { ...empty(), ...structuredClone(seed) } : empty();
-    save();
+    data = { ...empty(), ...structuredClone(seed ?? {}) };
+    await backend.write(data);
   }
 
-  function save() {
-    if (!file) return;
-    fs.mkdirSync(path.dirname(file), { recursive: true });
-    const tmp = `${file}.tmp`;
-    fs.writeFileSync(tmp, JSON.stringify(data, null, 2) + '\n');
-    fs.renameSync(tmp, file);
-  }
+  const save = () => backend.write(data);
 
   return {
-    file,
+    location: backend.describe,
+    async refresh() {
+      if (!shared) return;
+      const latest = await backend.read();
+      if (latest) data = { ...empty(), ...latest };
+    },
     snapshot: () => structuredClone(data),
     list: (kind) => data[kind],
     get: (kind, id) => data[kind].find((item) => item.id === id),
-    insert(kind, item) {
+    async insert(kind, item) {
       data[kind].push(item);
-      save();
+      await save();
       return item;
     },
-    replace(kind, id, item) {
+    async replace(kind, id, item) {
       const index = data[kind].findIndex((x) => x.id === id);
       if (index === -1) return null;
       data[kind][index] = item;
-      save();
+      await save();
       return item;
     },
-    remove(kind, id) {
+    async remove(kind, id) {
       const before = data[kind].length;
       data[kind] = data[kind].filter((x) => x.id !== id);
       if (data[kind].length === before) return false;
-      save();
+      await save();
       return true;
     },
     /** Replace whole collections at once (used by bulk import). */
-    setAll(next) {
+    async setAll(next) {
       data = { ...data, ...next };
-      save();
+      await save();
     },
   };
 }

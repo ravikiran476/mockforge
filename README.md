@@ -32,6 +32,24 @@ On first start, `data/mockforge.json` is seeded with example endpoints (`/api/us
 | ---------------- | ----------------------- | ----------------------------------------------- |
 | `PORT`           | `4000`                  | Port for the mock server                         |
 | `MOCKFORGE_DATA` | `data/mockforge.json`   | Data file (e.g. a separate one for e2e tests)   |
+| `MOCKFORGE_ADMIN_TOKEN` | unset           | Require this token (`X-MockForge-Token` or `Authorization: Bearer`) for the admin UI and API |
+
+## Deploy to Vercel
+
+The repo deploys as-is: `vercel.json` builds the UI as static files at `/__mockforge/`, and every other request goes to one Express function (`api/index.js`).
+
+1. Import the GitHub repo in Vercel (**Add New → Project**). Keep the defaults, since `vercel.json` sets the build.
+2. Under **Storage**, add **Upstash for Redis** (it has a free plan) and connect it to the project. This sets `KV_REST_API_URL` / `KV_REST_API_TOKEN` (or the `UPSTASH_REDIS_*` equivalents).
+3. Under **Settings → Environment Variables**, add `MOCKFORGE_ADMIN_TOKEN` with a long random value.
+4. Redeploy. Open `https://<project>.vercel.app/__mockforge/` and enter the token.
+
+How it behaves on Vercel:
+
+- **Storage:** the first request copies the committed `data/mockforge.json` into Redis, and after that Redis is the source of truth. To bring changes back into the repo, export them from **Share & sync** and commit the file. To reset the deploy, delete the `mockforge:data` key in Upstash.
+- **Admin API:** it stays disabled (503) until `MOCKFORGE_ADMIN_TOKEN` is set. Mock endpoints are always public.
+- **Without Redis:** edits only last for the life of one serverless instance.
+- **Network failures:** a simulated network failure shows up as a platform error (usually 502) rather than a raw connection reset.
+- **Latency:** each request is capped by the function's `maxDuration` (60 s).
 
 ## Endpoints
 
@@ -104,7 +122,8 @@ All routes live under `/__mockforge/api`:
 
 ```
 server/src/
-  index.js      entry point (env, seeding, listen)
+  index.js      local entry point (listen)
+  bootstrap.js  picks storage (file or Upstash Redis), auth, UI path
   app.js        Express wiring: CORS, admin API, UI hosting, mock catch-all
   api.js        admin REST routes
   engine.js     serves mocks: matching, latency, failures, templating, logging
@@ -113,6 +132,7 @@ server/src/
   openapi.js    spec parsing and example/schema sampling
   model.js      validation and defaults
   store.js      JSON-file persistence
+api/index.js    Vercel serverless entry
 server/test/    node:test integration tests (npm test)
 client/src/     React admin UI
 data/           mockforge.json (commit this to share mocks)
