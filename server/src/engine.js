@@ -58,6 +58,11 @@ export function mockHandler({ store, logs }) {
 
     const match = findEndpoint(store.list('endpoints'), req.method, req.path);
     if (!match) {
+      // A browser opening the bare host gets the admin UI unless "/" itself is mocked.
+      if (req.method === 'GET' && req.path === '/' && req.accepts(['json', 'html']) === 'html') {
+        res.redirect(302, `${ADMIN_PREFIX}/`);
+        return;
+      }
       await finish({ status: 404, matched: false });
       res.status(404).json({
         error: 'No mock endpoint matches this request',

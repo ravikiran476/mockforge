@@ -81,6 +81,14 @@ test('static paths beat params; unknown paths 404', async () => {
   assert.equal((await fetch(`${base}/nope`)).status, 404);
 });
 
+test('browsers opening "/" are sent to the admin UI; API clients get JSON', async () => {
+  const page = await fetch(`${base}/`, { headers: { Accept: 'text/html' }, redirect: 'manual' });
+  assert.equal(page.status, 302);
+  assert.equal(page.headers.get('location'), '/__mockforge/');
+  const api = await fetch(`${base}/`, { headers: { Accept: 'application/json' } });
+  assert.equal(api.status, 404);
+});
+
 test('validates endpoint input', async () => {
   const res = await admin('/endpoints', { method: 'POST', body: { method: 'GET', path: 'no-slash' } });
   assert.equal(res.status, 400);
