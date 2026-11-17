@@ -10,18 +10,46 @@ import { randomUUID } from 'node:crypto';
  *   {{filter fixtures.users role="admin"}}       all matching items
  *   {{length fixtures.users}}  {{uuid}}  {{now}}  {{timestamp}}  {{randomInt 1 100}}
  *
- * Strings are inserted raw; everything else is inserted as JSON.
+ * Strings are inserted raw; everything else is inserted as JSON. With `{ json: true }`, a value
+ * inside a JSON string literal ("name": "{{body.name}}") is escaped for that string instead, so
+ * quotes, backslashes and line breaks in the data keep the document valid.
  */
 const TOKEN = /\{\{\s*(.+?)\s*\}\}/g;
 
-export function render(template, ctx) {
+export function render(template, ctx, { json = false } = {}) {
   if (!template) return '';
-  return String(template).replace(TOKEN, (_, expr) => stringify(evaluate(expr, ctx)));
+  const text = String(template);
+  if (!json) return text.replace(TOKEN, (_, expr) => stringify(evaluate(expr, ctx)));
+  let out = '';
+  let last = 0;
+  let inString = false;
+  for (const m of text.matchAll(TOKEN)) {
+    const literal = text.slice(last, m.index);
+    inString = endsInsideString(literal, inString);
+    const value = evaluate(m[1], ctx);
+    out += literal + (inString ? escapeForJsonString(value) : stringify(value));
+    last = m.index + m[0].length;
+  }
+  return out + text.slice(last);
 }
 
 function stringify(value) {
   if (value === undefined) return '';
   return typeof value === 'string' ? value : JSON.stringify(value);
+}
+
+/** Tracks whether a run of template text leaves us inside a double-quoted JSON string. */
+function endsInsideString(literal, inString) {
+  for (let i = 0; i < literal.length; i++) {
+    if (inString && literal[i] === '\\') i++;
+    else if (literal[i] === '"') inString = !inString;
+  }
+  return inString;
+}
+
+function escapeForJsonString(value) {
+  if (value === undefined) return '';
+  return JSON.stringify(typeof value === 'string' ? value : JSON.stringify(value)).slice(1, -1);
 }
 
 export function evaluate(expr, ctx) {

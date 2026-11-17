@@ -4,7 +4,7 @@ import { endpointsFromSpec, parseSpec } from './openapi.js';
 
 const routeKey = (e) => `${e.method} ${e.path}`;
 
-export function adminRouter({ store, logs }) {
+export function adminRouter({ store, logs, adminProtected = false }) {
   const router = Router();
 
   const mustGet = (kind, id) => {
@@ -23,7 +23,7 @@ export function adminRouter({ store, logs }) {
     res.json({
       ok: true,
       storage: store.location,
-      adminProtected: Boolean(process.env.MOCKFORGE_ADMIN_TOKEN),
+      adminProtected: Boolean(adminProtected),
       endpoints: store.list('endpoints').length,
       fixtures: store.list('fixtures').length,
     });
@@ -97,21 +97,26 @@ export function adminRouter({ store, logs }) {
     const { endpoints } = generate(req.body);
     const mode = req.body?.mode === 'replace' ? 'replace' : 'skip';
     const selected = Array.isArray(req.body?.select) ? new Set(req.body.select) : null;
-    const summary = { created: 0, replaced: 0, skipped: 0 };
+    const drafts = endpoints.filter((e) => !selected || selected.has(routeKey(e))).map((e) => normalizeEndpoint(e));
 
-    for (const draft of endpoints) {
-      if (selected && !selected.has(routeKey(draft))) continue;
-      const existing = store.list('endpoints').find((e) => routeKey(e) === routeKey(normalizeEndpoint(draft)));
-      if (existing && mode === 'skip') {
-        summary.skipped++;
-      } else if (existing) {
-        await store.replace('endpoints', existing.id, normalizeEndpoint(draft, { id: existing.id, createdAt: existing.createdAt }));
-        summary.replaced++;
-      } else {
-        await store.insert('endpoints', normalizeEndpoint(draft));
-        summary.created++;
+    // One write for the whole import, however many operations the spec has.
+    const summary = await store.update((data) => {
+      const counts = { created: 0, replaced: 0, skipped: 0 };
+      for (const draft of drafts) {
+        const index = data.endpoints.findIndex((e) => routeKey(e) === routeKey(draft));
+        if (index !== -1 && mode === 'skip') {
+          counts.skipped++;
+        } else if (index !== -1) {
+          const existing = data.endpoints[index];
+          data.endpoints[index] = { ...draft, id: existing.id, createdAt: existing.createdAt };
+          counts.replaced++;
+        } else {
+          data.endpoints.push(draft);
+          counts.created++;
+        }
       }
-    }
+      return counts;
+    });
     res.json(summary);
   });
 
@@ -144,11 +149,15 @@ export function adminRouter({ store, logs }) {
     if (mode === 'replace') {
       await store.setAll({ endpoints: incomingEndpoints, fixtures: incomingFixtures });
     } else {
-      const endpoints = new Map(store.list('endpoints').map((e) => [e.id, e]));
-      for (const e of incomingEndpoints) endpoints.set(e.id, e);
-      const fixtures = new Map(store.list('fixtures').map((f) => [f.name, f]));
-      for (const f of incomingFixtures) fixtures.set(f.name, { ...f, id: fixtures.get(f.name)?.id ?? f.id });
-      await store.setAll({ endpoints: [...endpoints.values()], fixtures: [...fixtures.values()] });
+      // Merged into the latest data, so a concurrent edit elsewhere is kept.
+      await store.update((data) => {
+        const endpoints = new Map(data.endpoints.map((e) => [e.id, e]));
+        for (const e of incomingEndpoints) endpoints.set(e.id, e);
+        const fixtures = new Map(data.fixtures.map((f) => [f.name, f]));
+        for (const f of incomingFixtures) fixtures.set(f.name, { ...f, id: fixtures.get(f.name)?.id ?? f.id });
+        data.endpoints = [...endpoints.values()];
+        data.fixtures = [...fixtures.values()];
+      });
     }
     res.json({ mode, endpoints: incomingEndpoints.length, fixtures: incomingFixtures.length });
   });

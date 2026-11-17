@@ -24,15 +24,24 @@ npm run build
 npm start            # http://localhost:4000/__mockforge/
 ```
 
-Point your frontend's API base URL at `http://localhost:4000`. CORS is open, so any dev server origin can call it.
+Point your frontend's API base URL at `http://localhost:4000`. CORS is open on the mock endpoints, so any dev server origin can call them.
 
 On first start, `data/mockforge.json` is seeded with example endpoints (`/api/users`, `/api/users/:id`, `/api/flaky`) and a `users` fixture.
 
 | Env var          | Default                 | Purpose                                         |
 | ---------------- | ----------------------- | ----------------------------------------------- |
 | `PORT`           | `4000`                  | Port for the mock server                         |
+| `HOST`           | `127.0.0.1` and `::1`   | Address to listen on. `0.0.0.0` makes the mocks reachable from other devices (a phone, a VM) |
 | `MOCKFORGE_DATA` | `data/mockforge.json`   | Data file (e.g. a separate one for e2e tests)   |
 | `MOCKFORGE_ADMIN_TOKEN` | unset           | Require this token (`X-MockForge-Token` or `Authorization: Bearer`) for the admin UI and API |
+| `MOCKFORGE_MAX_DELAY_MS` | `30000`        | Upper limit for configured latency and `X-MockForge-Delay` |
+| `MOCKFORGE_LOG_UNMATCHED` | `true` (`false` on Vercel) | Record requests that match no endpoint in the request log |
+
+### Who can use the admin API
+
+The server listens on this machine only. Without `MOCKFORGE_ADMIN_TOKEN`, the admin API also checks every request: it must be addressed to `localhost` (or `127.0.0.1` / `[::1]`), and a browser request must come from a page on localhost. Other machines, other websites open in your browser, and DNS-rebinding pages get `403`. The admin API sends no CORS headers.
+
+To manage mocks from another machine, set `MOCKFORGE_ADMIN_TOKEN` (and `HOST=0.0.0.0`). The mock endpoints themselves never need a token.
 
 ## Deploy to Vercel
 
@@ -46,10 +55,12 @@ The repo deploys as-is: `vercel.json` builds the UI as static files at `/__mockf
 How it behaves on Vercel:
 
 - **Storage:** the first request copies the committed `data/mockforge.json` into Redis, and after that Redis is the source of truth. To bring changes back into the repo, export them from **Share & sync** and commit the file. To reset the deploy, delete the `mockforge:data` key in Upstash.
+- **Concurrent edits:** every save checks a revision number (`mockforge:data:revision`), so two people editing at once on different instances cannot overwrite each other's changes. Instances check that revision (one small read) at most once a second for mock traffic, and on every admin request, and only re-read the data when it changed.
 - **Admin API:** it stays disabled (503) until `MOCKFORGE_ADMIN_TOKEN` is set. Mock endpoints are always public.
+- **Request log:** each instance writes at most 10 log entries a second to Redis, and requests that match no endpoint are not logged unless `MOCKFORGE_LOG_UNMATCHED=true`. This keeps bots and traffic bursts from using up the Upstash quota.
 - **Without Redis:** edits only last for the life of one serverless instance.
 - **Network failures:** a simulated network failure shows up as a platform error (usually 502) rather than a raw connection reset.
-- **Latency:** each request is capped by the function's `maxDuration` (60 s).
+- **Latency:** delays are capped at `MOCKFORGE_MAX_DELAY_MS` (30 s), below the function's `maxDuration` (60 s).
 
 ## Endpoints
 
@@ -76,7 +87,7 @@ Response bodies and header values support `{{ … }}`:
 | `{{length fixtures.users}}`              | Count                                  |
 | `{{uuid}}` `{{now}}` `{{timestamp}}` `{{randomInt 1 100}}` | Generated values     |
 
-Strings are inserted raw, so quote them inside JSON (`"name": "{{body.name}}"`). Objects, arrays, numbers and `null` are inserted as JSON.
+Inside a JSON string (`"name": "{{body.name}}"`), the value is escaped for that string, so quotes, backslashes and line breaks in the data keep the response valid JSON. Outside quotes, strings are inserted as written (`"page": {{query.page ?? 1}}` gives a number), and objects, arrays, numbers and `null` are inserted as JSON. A body counts as JSON when its `Content-Type` header says so, or, without one, when it starts with `{` or `[`. Header values are kept on one line.
 
 ## OpenAPI import
 
@@ -94,7 +105,7 @@ These request headers make runs deterministic:
 | ------------------------------ | ------------------------------------- |
 | `X-MockForge-Force: failure`   | Always return the failure response    |
 | `X-MockForge-Force: success`   | Never simulate a failure              |
-| `X-MockForge-Delay: 0`         | Override latency (ms) for one request |
+| `X-MockForge-Delay: 0`         | Override latency (ms) for one request, up to `MOCKFORGE_MAX_DELAY_MS` |
 
 Responses include `X-MockForge-Endpoint` (the matched endpoint id) and, for simulated failures, `X-MockForge-Simulated: failure`.
 
@@ -131,7 +142,7 @@ server/src/
   template.js   {{ }} template evaluator
   openapi.js    spec parsing and example/schema sampling
   model.js      validation and defaults
-  store.js      JSON-file persistence
+  store.js      persistence (JSON file, memory or Redis) with revision-checked writes
 api/index.js    Vercel serverless entry
 server/test/    node:test integration tests (npm test)
 client/src/     React admin UI

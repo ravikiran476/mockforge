@@ -46,6 +46,9 @@ export async function buildApp(env = process.env) {
     clientDist: path.join(repoRoot, 'client', 'dist', '__mockforge'),
     adminToken: env.MOCKFORGE_ADMIN_TOKEN || undefined,
     requireToken: onVercel,
+    maxDelayMs: Number(env.MOCKFORGE_MAX_DELAY_MS) || 30_000,
+    // On a public deploy most unmatched requests are bots probing for /wp-login.php and the like.
+    logUnmatched: env.MOCKFORGE_LOG_UNMATCHED ? env.MOCKFORGE_LOG_UNMATCHED !== 'false' : !onVercel,
   });
   return { app, store };
 }

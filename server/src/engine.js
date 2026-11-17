@@ -30,8 +30,10 @@ function preview(value, limit = 2000) {
  * Per-request overrides (handy in automated tests):
  *   X-MockForge-Force: failure | success   bypass the random failure roll
  *   X-MockForge-Delay: <ms>                override configured latency
+ *
+ * Every delay is capped at `maxDelayMs`, so a caller cannot hold connections open indefinitely.
  */
-export function mockHandler({ store, logs }) {
+export function mockHandler({ store, logs, maxDelayMs = 30_000, logUnmatched = true }) {
   return async (req, res) => {
     const started = Date.now();
     const entry = {
@@ -63,7 +65,7 @@ export function mockHandler({ store, logs }) {
         res.redirect(302, `${ADMIN_PREFIX}/`);
         return;
       }
-      await finish({ status: 404, matched: false });
+      if (logUnmatched) await finish({ status: 404, matched: false });
       res.status(404).json({
         error: 'No mock endpoint matches this request',
         method: req.method,
@@ -87,9 +89,10 @@ export function mockHandler({ store, logs }) {
 
     const force = String(req.get('x-mockforge-force') || '').toLowerCase();
     const delayHeader = req.get('x-mockforge-delay');
-    const delay = delayHeader !== undefined && Number.isFinite(Number(delayHeader))
+    const requested = delayHeader !== undefined && Number.isFinite(Number(delayHeader))
       ? Math.max(0, Number(delayHeader))
       : pickDelay(endpoint.latency);
+    const delay = Math.min(requested, maxDelayMs);
     const failed = force === 'failure' ? true : force === 'success' ? false : Math.random() < endpoint.failure.rate;
 
     if (delay) await sleep(delay);
@@ -107,9 +110,13 @@ export function mockHandler({ store, logs }) {
 
     let body;
     const headers = {};
+    const declaredType = Object.entries(spec.headers || {}).find(([name]) => name.toLowerCase() === 'content-type')?.[1];
+    // JSON bodies get JSON-escaped values inside string literals, so a quote in the data cannot break the document.
+    const json = declaredType ? /json/i.test(declaredType) : /^\s*[[{]/.test(spec.body || '');
     try {
-      body = render(spec.body, ctx);
-      for (const [name, value] of Object.entries(spec.headers || {})) headers[name] = render(value, ctx);
+      body = render(spec.body, ctx, { json });
+      // Line breaks would split the header (Node rejects them); keep the value on one line.
+      for (const [name, value] of Object.entries(spec.headers || {})) headers[name] = render(value, ctx).replace(/[\r\n]+/g, ' ');
     } catch (err) {
       await finish({ ...logged, status: 500, note: `Template error: ${err.message}` });
       res.status(500).json({ error: 'MockForge template error', message: err.message, endpoint: endpoint.name });
